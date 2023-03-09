@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
 // DiscoveryInterval is how often we re-publish our mDNS records.
@@ -31,4 +34,28 @@ func main() {
 	fmt.Println("room:", room)
 	fmt.Println("nick:", nickname)
 	fmt.Println("host:", h.ID().Pretty())
+
+	ctx := context.Background()
+	// 用 GossipSub router 建立新的 PubSub service
+	ps, err := pubsub.NewGossipSub(ctx, h)
+	if err != nil {
+		panic(err)
+	}
+
+	// setup local mDNS discovery
+	if err := setupDiscovery(h); err != nil {
+		panic(err)
+	}
+
+	// 加入聊天室
+	cr, err := JoinChatRoom(ctx, ps, h.ID(), nickname, room)
+	if err != nil {
+		panic(err)
+	}
+
+	// draw the UI
+	ui := NewChatUI(cr)
+	if err = ui.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error running text UI: %s", err)
+	}
 }
