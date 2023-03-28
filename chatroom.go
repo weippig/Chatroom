@@ -9,14 +9,10 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
-// ChatRoomBufSize is the number of incoming messages to buffer for each topic.
+// Chatroom 的 Messages channel 的緩衝大小
 const ChatRoomBufSize = 128
 
-// ChatRoom represents a subscription to a single PubSub topic. Messages
-// can be published to the topic with ChatRoom.Publish, and received
-// messages are pushed to the Messages channel.
 type ChatRoom struct {
-	// Messages is a channel of messages received from other peers in the chat room
 	Messages chan *ChatMessage
 
 	ctx   context.Context
@@ -29,23 +25,61 @@ type ChatRoom struct {
 	nick     string
 }
 
-// ChatMessage gets converted to/from JSON and sent in the body of pubsub messages.
 type ChatMessage struct {
 	Message    string
 	SenderID   string
 	SenderNick string
 }
 
-// JoinChatRoom tries to subscribe to the PubSub topic for the room name, returning
-// a ChatRoom on success.
+// 寄送 message 給 pubsub topic
+func (cr *ChatRoom) Publish(message string) error {
+	m := ChatMessage{
+		Message:    message,
+		SenderID:   cr.self.Pretty(),
+		SenderNick: cr.nick,
+	}
+
+	msgBytes, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+
+	return cr.topic.Publish(cr.ctx, msgBytes)
+}
+
+func (cr *ChatRoom) readLoop() {
+	for {
+		msg, err := cr.sub.Next(cr.ctx)
+		if err != nil {
+			close(cr.Messages)
+		}
+
+		// 忽略自己發布的訊息
+		if msg.ReceivedFrom == cr.self {
+			continue
+		}
+
+		cm := new(ChatMessage)
+		err = json.Unmarshal(msg.Data, cm) // Unmarshal 的訊息會被存在 cm
+		if err != nil {
+			continue
+		}
+
+		// 把訊息送到 chatroom 的 Messages channel
+		cr.Messages <- cm
+	}
+}
+
+// 這個 function 會去訂閱一個 Pubsub topic， topic 就是聊天室的名字
+// 成功的話會回傳一個 ChatRoom 物件
 func JoinChatRoom(ctx context.Context, ps *pubsub.PubSub, selfID peer.ID, nickname string, roomName string) (*ChatRoom, error) {
-	// join the pubsub topic
-	topic, err := ps.Join(topicName(roomName))
+	// 加入 topic
+	topic, err := ps.Join("chat-room:" + roomName)
 	if err != nil {
 		return nil, err
 	}
 
-	// and subscribe to it
+	// 訂閱 topic
 	sub, err := topic.Subscribe()
 	if err != nil {
 		return nil, err
@@ -62,51 +96,7 @@ func JoinChatRoom(ctx context.Context, ps *pubsub.PubSub, selfID peer.ID, nickna
 		Messages: make(chan *ChatMessage, ChatRoomBufSize),
 	}
 
-	// start reading messages from the subscription in a loop
-	go cr.readLoop()
+	go cr.readLoop() // 一直持續把新訊息加入 channel
+
 	return cr, nil
-}
-
-// Publish sends a message to the pubsub topic.
-func (cr *ChatRoom) Publish(message string) error {
-	m := ChatMessage{
-		Message:    message,
-		SenderID:   cr.self.Pretty(),
-		SenderNick: cr.nick,
-	}
-	msgBytes, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	return cr.topic.Publish(cr.ctx, msgBytes)
-}
-
-func (cr *ChatRoom) ListPeers() []peer.ID {
-	return cr.ps.ListPeers(topicName(cr.roomName))
-}
-
-// readLoop pulls messages from the pubsub topic and pushes them onto the Messages channel.
-func (cr *ChatRoom) readLoop() {
-	for {
-		msg, err := cr.sub.Next(cr.ctx)
-		if err != nil {
-			close(cr.Messages)
-			return
-		}
-		// only forward messages delivered by others
-		if msg.ReceivedFrom == cr.self {
-			continue
-		}
-		cm := new(ChatMessage)
-		err = json.Unmarshal(msg.Data, cm)
-		if err != nil {
-			continue
-		}
-		// send valid messages onto the Messages channel
-		cr.Messages <- cm
-	}
-}
-
-func topicName(roomName string) string {
-	return "chat-room:" + roomName
 }

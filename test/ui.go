@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/rivo/tview"
 )
 
@@ -119,7 +121,7 @@ func (ui *ChatUI) end() {
 // refreshPeers pulls the list of peers currently in the chat room and
 // displays the last 8 chars of their peer id in the Peers panel in the ui.
 func (ui *ChatUI) refreshPeers() {
-	peers := ui.cr.ListPeers()
+	peers := ui.cr.ps.ListPeers("chat-room:" + ui.cr.roomName)
 
 	// clear is thread-safe
 	ui.peersList.Clear()
@@ -129,6 +131,12 @@ func (ui *ChatUI) refreshPeers() {
 	}
 
 	ui.app.Draw()
+}
+
+// shortID returns the last 8 chars of a base58-encoded peer id.
+func shortID(p peer.ID) string {
+	pretty := p.Pretty()
+	return pretty[len(pretty)-8:]
 }
 
 // displayChatMessage writes a ChatMessage from the room to the message window,
@@ -158,7 +166,7 @@ func (ui *ChatUI) handleEvents() {
 			// when the user types in a line, publish it to the chat room and print to the message window
 			err := ui.cr.Publish(input)
 			if err != nil {
-				printErr("publish error: %s", err)
+				fmt.Fprintf(os.Stderr, "publish error: %s", err)
 			}
 			ui.displaySelfMessage(input)
 
